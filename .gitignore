@@ -1,0 +1,4 @@
+*.o
+*.sqlite3
+run.sh
+usenet
