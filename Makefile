@@ -1,6 +1,6 @@
 CFLAGS = -g3 -DDEBUG
 
-all: usenet
+all: pwnntp
 
 main.o: main.c main.h conn.h group.h response.h
 	gcc $(CFLAGS) -c main.c -o main.o
@@ -14,8 +14,8 @@ group.o: group.c group.h
 response.o: response.c response.h
 	gcc $(CFLAGS) -c response.c -o response.o
 
-usenet: main.o conn.o group.o response.o
-	gcc main.o conn.o group.o response.o -o usenet -lssl -lsqlite3 -lz
+pwnntp: main.o conn.o group.o response.o
+	gcc main.o conn.o group.o response.o -o pwnntp -lssl -lsqlite3 -lz
 
 clean:
-	rm -f *.o usenet
+	rm -f *.o pwnntp
