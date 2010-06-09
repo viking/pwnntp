@@ -38,7 +38,7 @@ nntp_receive(n_conn)
   res = BIO_read(n_conn->bio, n_res->code, 3);
   if (res != 3) {
     nntp_response_free(n_res);
-    fprintf(stderr, "Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+    fprintf(stderr, "Couldn't read: %s\n", ERR_reason_error_string(ERR_get_error()));
     return NULL;
   }
   n_res->code[3] = 0;

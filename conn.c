@@ -26,7 +26,7 @@ nntp_conn_new(server)
   n_conn->ctx = SSL_CTX_new(SSLv23_client_method());
   if (!SSL_CTX_load_verify_locations(n_conn->ctx, NULL, "/etc/ssl/certs")) {
     nntp_conn_free(n_conn);
-    printf("Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+    fprintf(stderr, "Couldn't load certs: %s\n", ERR_reason_error_string(ERR_get_error()));
     return NULL;
   }
 
@@ -37,13 +37,13 @@ nntp_conn_new(server)
   BIO_set_conn_hostname(n_conn->bio, server);
   if (BIO_do_connect(n_conn->bio) <= 0) {
     nntp_conn_free(n_conn);
-    printf("Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+    fprintf(stderr, "Couldn't connect to host: %s\n", ERR_reason_error_string(ERR_get_error()));
     return NULL;
   }
 
   if (SSL_get_verify_result(n_conn->ssl) != X509_V_OK) {
     nntp_conn_free(n_conn);
-    printf("Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+    fprintf(stderr, "Couldn't verify: %s\n", ERR_reason_error_string(ERR_get_error()));
     return NULL;
   }
 
@@ -65,7 +65,7 @@ nntp_read(n_conn, sentinel, strip)
     res = BIO_read(n_conn->bio, tail, 1);
     if (res < 0) {
       free(head);
-      fprintf(stderr, "Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+      fprintf(stderr, "Couldn't read: %s\n", ERR_reason_error_string(ERR_get_error()));
       return NULL;
     }
     if (res == 0) {
@@ -102,7 +102,7 @@ nntp_send(n_conn, cmd)
 #endif
   res = BIO_write(n_conn->bio, cmd, len);
   if (res != len) {
-    fprintf(stderr, "Error: %s\n", ERR_reason_error_string(ERR_get_error()));
+    fprintf(stderr, "Couldn't write: %s\n", ERR_reason_error_string(ERR_get_error()));
     return 1;
   }
   return 0;

@@ -100,7 +100,7 @@ nntp_decode_headers(data)
         case Z_MEM_ERROR:
           (void)inflateEnd(&strm);
           free(r_head);
-          fprintf(stderr, "Error: %d\n", ret);
+          fprintf(stderr, "Inflate failed: %d\n", ret);
           return NULL;
       }
 
@@ -161,7 +161,7 @@ main(argc, argv)
   int argc;
   char *argv[];
 {
-  int i, article_id, res, migrate, abort, count;
+  int i, article_id, group_id, res, migrate, abort, count;
   char cmd[1024], *headers, *h_cur, *h_tail, *server,
        *username, *password, *group;
   FILE *f = NULL;
@@ -235,7 +235,7 @@ main(argc, argv)
     /* create schema the first time */
     migrate = 1;
   }
-  res = sqlite3_open("headers.sqlite3", &s_db);
+  res = sqlite3_open(DATABASE, &s_db);
   if (res != SQLITE_OK) {
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
@@ -246,10 +246,61 @@ main(argc, argv)
   /* create schema, or find last article id */
   if (migrate) {
     article_id = 0;
-    sqlite3_exec(s_db, "CREATE TABLE headers (article_id INTEGER PRIMARY KEY, subject TEXT)", NULL, NULL, NULL);
+    res = sqlite3_exec(s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)", NULL, NULL, NULL);
+    if (res == 0) {
+      res = sqlite3_exec(s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, group_id INTEGER, subject TEXT)", NULL, NULL, NULL);
+    }
+    if (res != 0) {
+      sqlite3_close(s_db);
+      nntp_group_free(n_group);
+      nntp_shutdown(n_conn, n_res);
+      fprintf(stderr, "Couldn't create schema.\n");
+      return 1;
+    }
+  }
+
+  /* find or create group */
+  res = sqlite3_prepare_v2(s_db, "SELECT id FROM groups WHERE name = ?", -1, &s_stmt, NULL);
+  if (res != SQLITE_OK) {
+    sqlite3_close(s_db);
+    nntp_group_free(n_group);
+    nntp_shutdown(n_conn, n_res);
+    fprintf(stderr, "Couldn't prepare statement.\n");
+    return 1;
+  }
+  sqlite3_bind_text(s_stmt, 1, group, strlen(group), SQLITE_STATIC);
+  res = sqlite3_step(s_stmt);
+  if (res == SQLITE_ROW) {
+    group_id = sqlite3_column_int(s_stmt, 0);
+    article_id = 0;
+    sqlite3_finalize(s_stmt);
   }
   else {
-    res = sqlite3_prepare_v2(s_db, "SELECT article_id FROM headers ORDER BY article_id DESC LIMIT 1", -1, &s_stmt, NULL);
+    sqlite3_finalize(s_stmt);
+    res = sqlite3_prepare_v2(s_db, "INSERT INTO groups (name) VALUES (?)", -1, &s_stmt, NULL);
+    if (res != SQLITE_OK) {
+      sqlite3_close(s_db);
+      nntp_group_free(n_group);
+      nntp_shutdown(n_conn, n_res);
+      fprintf(stderr, "Couldn't prepare statement.\n");
+      return 1;
+    }
+    sqlite3_bind_text(s_stmt, 1, group, strlen(group), SQLITE_STATIC);
+    res = sqlite3_step(s_stmt);
+    sqlite3_finalize(s_stmt);
+    if (res == SQLITE_DONE) {
+      group_id = (int)sqlite3_last_insert_rowid(s_db);
+    }
+    else {
+      sqlite3_close(s_db);
+      nntp_group_free(n_group);
+      nntp_shutdown(n_conn, n_res);
+      fprintf(stderr, "Couldn't insert group.\n");
+      return 1;
+    }
+
+    res = sqlite3_prepare_v2(s_db, "SELECT id FROM articles WHERE group_id = ? ORDER BY id DESC LIMIT 1", -1, &s_stmt, NULL);
+    sqlite3_bind_int(s_stmt, 1, article_id);
     if (res != SQLITE_OK) {
       sqlite3_close(s_db);
       nntp_group_free(n_group);
@@ -263,13 +314,14 @@ main(argc, argv)
   }
 
   /* grab the headers! */
-  res = sqlite3_prepare_v2(s_db, "INSERT INTO headers (article_id, subject) VALUES (?, ?)", -1, &s_stmt, NULL);
+  res = sqlite3_prepare_v2(s_db, "INSERT INTO articles (id, group_id, subject) VALUES (?, ?, ?)", -1, &s_stmt, NULL);
   if (res != SQLITE_OK) {
     free(headers);
     sqlite3_close(s_db);
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
     fprintf(stderr, "Couldn't prepare SQL statement.\n");
+    return 1;
   }
 
   abort = 0;
@@ -322,7 +374,8 @@ main(argc, argv)
       }
 
       sqlite3_bind_int(s_stmt, 1, article_id);
-      sqlite3_bind_text(s_stmt, 2, h_cur, h_tail - h_cur, SQLITE_STATIC);
+      sqlite3_bind_int(s_stmt, 2, group_id);
+      sqlite3_bind_text(s_stmt, 3, h_cur, h_tail - h_cur, SQLITE_STATIC);
       do {
         res = sqlite3_step(s_stmt);
         if (res == SQLITE_DONE) {
@@ -354,7 +407,9 @@ main(argc, argv)
         fprintf(stderr, "Couldn't commit the transaction: %d\n", res);
       }
     } while (res == SQLITE_BUSY);
-    printf("Number of valid headers for this batch: %d.\n", count);
+#ifdef DEBUG
+    fprintf(stderr, "Number of valid headers for this batch: %d.\n", count);
+#endif
   }
 
   sqlite3_finalize(s_stmt);

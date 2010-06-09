@@ -1,4 +1,5 @@
-CFLAGS = -g3 -DDEBUG
+CFLAGS = -g3 -DDEBUG -D_FILE_OFFSET_BITS=64
+#CFLAGS = -O2
 
 all: pwnntp
 
