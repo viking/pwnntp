@@ -12,8 +12,8 @@
 typedef struct {
   char code[4];
   int  status;
+  char *_msg;
   char *msg;
-  int  msglen;
   void *data;
 } nntp_response;
 

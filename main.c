@@ -126,7 +126,7 @@ nntp_decode_headers(data)
   /* clean up and return */
   (void)inflateEnd(&strm);
   if (ret == Z_STREAM_END) {
-    r_tail = 0;
+    *r_tail = 0;
     return r_head;
   }
 
@@ -156,14 +156,25 @@ nntp_shutdown(n_conn, n_res)
     nntp_conn_free(n_conn);
 }
 
+void
+print_syntax(name)
+  const char *name;
+{
+  printf("%s options:\n", name);
+  printf("  -s, --server SERVER\n");
+  printf("  -u, --user USER\n");
+  printf("  -p, --password PASSWORD\n");
+  printf("  -g, --group GROUP\n");
+  printf("  -d, --database DATABASE   (default: pwnntp.sqlite3)\n");
+}
+
 int
 main(argc, argv)
   int argc;
   char *argv[];
 {
-  int i, article_id, group_id, res, migrate, abort, count;
-  char cmd[1024], *headers, *h_cur, *h_tail, *server,
-       *username, *password, *group;
+  int i, c, len, article_id, group_id, res, migrate, abort, count;
+  char cmd[1024], *headers, *h_cur, *h_tail;
   FILE *f = NULL;
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
@@ -171,14 +182,62 @@ main(argc, argv)
   sqlite3 *s_db = NULL;
   sqlite3_stmt *s_stmt = NULL;
 
-  if (argc != 5) {
-    printf("Syntax: %s <server> <username> <password> <group>\n", argv[0]);
-    return 1;
+  /* parse options */
+  char *server = NULL, *user = NULL, *password = NULL, *group = NULL, 
+       *database = DEFAULT_DATABASE;
+
+  while (1)
+  {
+    static struct option long_options[] =
+    {
+      {"server"  , required_argument, 0, 's'},
+      {"user"    , required_argument, 0, 'u'},
+      {"password", required_argument, 0, 'p'},
+      {"group"   , required_argument, 0, 'g'},
+      {"database", required_argument, 0, 'd'},
+      {0, 0, 0, 0}
+    };
+    /* getopt_long stores the option index here. */
+    int option_index = 0;
+    c = getopt_long (argc, argv, "s:u:p:g:d:", long_options, &option_index);
+
+    /* Detect the end of the options. */
+    if (c == -1)
+      break;
+
+    switch (c)
+    {
+      case 0:
+        print_syntax(argv[0]);
+        return(1);
+        break;
+      case 's':
+        server = optarg;
+        break;
+      case 'u':
+        user = optarg;
+        break;
+      case 'p':
+        password = optarg;
+        break;
+      case 'g':
+        group = optarg;
+        break;
+      case 'd':
+        database = optarg;
+        break;
+      case '?':
+        /* getopt_long already printed an error message. */
+        break;
+      default:
+        print_syntax(argv[0]);
+        return(1);
+    }
   }
-  server = argv[1];
-  username = argv[2];
-  password = argv[3];
-  group = argv[4];
+  if (server == NULL || user == NULL || password == NULL || group == NULL) {
+    print_syntax(argv[0]);
+    return(1);
+  }
 
   nntp_init();
   if ((n_conn = nntp_conn_new(server)) == NULL) {
@@ -196,7 +255,7 @@ main(argc, argv)
   nntp_response_free(n_res); n_res = NULL;
 
   /* authentication */
-  sprintf(cmd, "AUTHINFO USER %s\r\n", username);
+  sprintf(cmd, "AUTHINFO USER %s\r\n", user);
   nntp_send(n_conn, cmd);
   n_res = nntp_receive(n_conn);
   if (n_res->status == NNTP_PASS_REQUIRED) {
@@ -227,15 +286,15 @@ main(argc, argv)
   nntp_response_free(n_res); n_res = NULL;
 
   /* open the sqlite database */
-  if ((f = fopen(DATABASE, "r")) != NULL) {
+  if ((f = fopen(database, "r")) != NULL) {
     migrate = 0;
     fclose(f);
   }
   else {
-    /* create schema the first time */
+    /* schema needs to be created */
     migrate = 1;
   }
-  res = sqlite3_open(DATABASE, &s_db);
+  res = sqlite3_open(database, &s_db);
   if (res != SQLITE_OK) {
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
@@ -243,12 +302,12 @@ main(argc, argv)
     return 1;
   }
 
-  /* create schema, or find last article id */
+  /* create schema if necessary */
   if (migrate) {
     article_id = 0;
     res = sqlite3_exec(s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)", NULL, NULL, NULL);
     if (res == 0) {
-      res = sqlite3_exec(s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, group_id INTEGER, subject TEXT)", NULL, NULL, NULL);
+      res = sqlite3_exec(s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER, group_id INTEGER, subject TEXT)", NULL, NULL, NULL);
     }
     if (res != 0) {
       sqlite3_close(s_db);
@@ -259,7 +318,7 @@ main(argc, argv)
     }
   }
 
-  /* find or create group */
+  /* find or create group; find last article id that we know about */
   res = sqlite3_prepare_v2(s_db, "SELECT id FROM groups WHERE name = ?", -1, &s_stmt, NULL);
   if (res != SQLITE_OK) {
     sqlite3_close(s_db);
@@ -271,11 +330,25 @@ main(argc, argv)
   sqlite3_bind_text(s_stmt, 1, group, strlen(group), SQLITE_STATIC);
   res = sqlite3_step(s_stmt);
   if (res == SQLITE_ROW) {
+    /* group exists; get latest article_id */
     group_id = sqlite3_column_int(s_stmt, 0);
-    article_id = 0;
+    sqlite3_finalize(s_stmt);
+
+    res = sqlite3_prepare_v2(s_db, "SELECT article_id FROM articles WHERE group_id = ? ORDER BY article_id DESC LIMIT 1", -1, &s_stmt, NULL);
+    sqlite3_bind_int(s_stmt, 1, group_id);
+    if (res != SQLITE_OK) {
+      sqlite3_close(s_db);
+      nntp_group_free(n_group);
+      nntp_shutdown(n_conn, n_res);
+      fprintf(stderr, "Couldn't prepare statement.\n");
+      return 1;
+    }
+    res = sqlite3_step(s_stmt);
+    article_id = res == SQLITE_ROW ? sqlite3_column_int(s_stmt, 0) : 0;
     sqlite3_finalize(s_stmt);
   }
   else {
+    /* create group */
     sqlite3_finalize(s_stmt);
     res = sqlite3_prepare_v2(s_db, "INSERT INTO groups (name) VALUES (?)", -1, &s_stmt, NULL);
     if (res != SQLITE_OK) {
@@ -298,23 +371,11 @@ main(argc, argv)
       fprintf(stderr, "Couldn't insert group.\n");
       return 1;
     }
-
-    res = sqlite3_prepare_v2(s_db, "SELECT id FROM articles WHERE group_id = ? ORDER BY id DESC LIMIT 1", -1, &s_stmt, NULL);
-    sqlite3_bind_int(s_stmt, 1, article_id);
-    if (res != SQLITE_OK) {
-      sqlite3_close(s_db);
-      nntp_group_free(n_group);
-      nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't prepare statement.\n");
-      return 1;
-    }
-    res = sqlite3_step(s_stmt);
-    article_id = res == SQLITE_ROW ? sqlite3_column_int(s_stmt, 0) : 0;
-    sqlite3_finalize(s_stmt);
+    article_id = 0;
   }
 
   /* grab the headers! */
-  res = sqlite3_prepare_v2(s_db, "INSERT INTO articles (id, group_id, subject) VALUES (?, ?, ?)", -1, &s_stmt, NULL);
+  res = sqlite3_prepare_v2(s_db, "INSERT INTO articles (article_id, group_id, subject) VALUES (?, ?, ?)", -1, &s_stmt, NULL);
   if (res != SQLITE_OK) {
     free(headers);
     sqlite3_close(s_db);
@@ -326,9 +387,10 @@ main(argc, argv)
 
   abort = 0;
   i = article_id == 0 ? n_group->low : article_id + 1;
-  for(; i < n_group->high && abort == 0; i += LIMIT + 1) {
+  while(i < n_group->high && abort == 0) {
     count = 0;
-    sprintf(cmd, "XZHDR Subject %d-%d\r\n", i, i + LIMIT);
+    sprintf(cmd, "XZHDR Subject %d-%d\r\n", i, i + LIMIT - 1);
+    i += LIMIT;
     nntp_send(n_conn, cmd);
     n_res = nntp_receive(n_conn);
     if (n_res->status == NNTP_XZHDR_OK) {
@@ -362,16 +424,16 @@ main(argc, argv)
     } while (res == SQLITE_BUSY);
 
     while (*h_cur != 0 && abort == 0) {
-      article_id = (int)strtol(h_cur, &h_cur, 10);
-      while (*h_cur == ' ')
-        h_cur++;
-
       h_tail = strstr(h_cur, "\r\n");
       if (h_tail == NULL) {
         abort = 1;
         fprintf(stderr, "Invalid header record found.\n");
         break;
       }
+
+      article_id = (int)strtol(h_cur, &h_cur, 10);
+      while (*h_cur == ' ')
+        h_cur++;
 
       sqlite3_bind_int(s_stmt, 1, article_id);
       sqlite3_bind_int(s_stmt, 2, group_id);
@@ -390,7 +452,7 @@ main(argc, argv)
         }
         else {
           abort = 1;
-          fprintf(stderr, "Couldn't insert row for %d: %d\n", article_id, res);
+          fprintf(stderr, "Couldn't insert row (%d)\n  article_id: %d, group_id: %d\n", res, article_id, group_id);
         }
       } while (res == SQLITE_BUSY);
     }

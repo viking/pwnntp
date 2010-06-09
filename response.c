@@ -5,18 +5,9 @@ void
 nntp_response_free(n_res)
   nntp_response *n_res;
 {
-  if (n_res->msg != NULL) {
-    free(n_res->msg);
+  if (n_res->_msg != NULL) {
+    free(n_res->_msg);
   }
-  /*
-  if (n_res->data != NULL) {
-    switch(n_res->status) {
-      case NNTP_GROUP_OK:
-        nntp_group_free((nntp_group *) n_res->data);
-        break;
-    }
-  }
-  */
   free(n_res);
 }
 
@@ -24,13 +15,13 @@ nntp_response *
 nntp_receive(n_conn)
   nntp_conn *n_conn;
 {
-  int res, multiline = 0;
+  int res, i, multiline = 0;
   char *tail;
   nntp_response *n_res;
 
   n_res = (nntp_response *)malloc(sizeof(nntp_response));
   n_res->status = 0;
-  n_res->msglen = 0;
+  n_res->_msg = NULL;
   n_res->msg = NULL;
   n_res->data = NULL;
 
@@ -64,8 +55,10 @@ nntp_receive(n_conn)
     fprintf(stderr, "Unrecognized code: <%s>\n", n_res->code);
   }
 
-  /* nntp response body */
-  n_res->msg = nntp_read(n_conn, "\r\n", 1);
+  /* nntp response body; 'strip' off leading spaces */
+  n_res->_msg = nntp_read(n_conn, "\r\n", 2);
+  for (n_res->msg = n_res->_msg; *n_res->msg == ' '; n_res->msg++);
+
 #ifdef DEBUG
   fprintf(stderr, "%s: %s\n", n_res->code, n_res->msg);
 #endif
@@ -76,7 +69,7 @@ nntp_receive(n_conn)
   }
   else if (multiline) {
     /* handle multiline */
-    n_res->data = (void *)nntp_read(n_conn, "\r\n.\r\n", 0);
+    n_res->data = (void *)nntp_read(n_conn, "\r\n.\r\n", 3);
     /*
     if (DEBUG)
       fprintf(stderr, "=====\n%s\n=====\n", (char *)n_res->data);

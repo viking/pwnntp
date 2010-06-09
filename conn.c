@@ -51,14 +51,14 @@ nntp_conn_new(server)
 }
 
 char *
-nntp_read(n_conn, sentinel, strip)
+nntp_read(n_conn, sentinel, chomp)
   nntp_conn *n_conn;
   const char *sentinel;
-  int strip;
+  int chomp;
 {
   int len = 0, slen = strlen(sentinel);
   char *head, *tail;
-  int res;
+  int res, sindex = 0;
 
   head = tail = (char *)malloc(sizeof(char) * 1024);
   while (1) {
@@ -71,23 +71,28 @@ nntp_read(n_conn, sentinel, strip)
     if (res == 0) {
       break;
     }
+    len++;
 
-    if (len > 0 && len % 1023 == 0) {
+    if (len % 1024 == 0) {
+      /* make sure we have enough space for string + null */
       head = (char *)realloc((void *)head, sizeof(char) * (len + 1024));
-      tail = head + len;
+      tail = head + len - 1;
     }
 
     /* check for sentinel */
-    if (len >= slen && strncmp(tail-(slen-1), sentinel, slen) == 0) {
-      break;
+    if (*tail == sentinel[sindex]) {
+      sindex++;
+      if (sindex == slen) {
+        /* sentinel found */
+        break;
+      }
     }
-
-    if (strip == 0 || *tail != ' ' || len > 0) {
-      // strip leading space
-      len++; tail++;
+    else {
+      sindex = 0;
     }
+    tail++;
   }
-  *(tail-(slen-1)) = 0;
+  *(tail-chomp+1) = 0;
   return head;
 }
 

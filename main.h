@@ -8,8 +8,9 @@
 #include <openssl/err.h>
 #include <sqlite3.h>
 #include <zlib.h>
+#include <getopt.h>
 
 #define LIMIT 10000
 #define CHUNK 16384
-#define DATABASE "pwnntp.sqlite3"
+#define DEFAULT_DATABASE "pwnntp.sqlite3"
 #define YENC_LINE "=ybegin line=128 size=-1\r\n"
