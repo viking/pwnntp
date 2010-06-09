@@ -400,6 +400,7 @@ main(argc, argv)
       headers = NULL;
     }
     free(n_res->data);
+    nntp_response_free(n_res); n_res = NULL;
 
     if (headers == NULL) {
       sqlite3_close(s_db);
