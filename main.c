@@ -2,6 +2,7 @@
 #include "conn.h"
 #include "group.h"
 #include "response.h"
+#include "database.h"
 
 char *
 nntp_decode_headers(data)
@@ -179,12 +180,11 @@ main(argc, argv)
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
   nntp_group *n_group = NULL;
-  sqlite3 *s_db = NULL;
-  sqlite3_stmt *s_stmt = NULL;
+  database *db = NULL;
 
   /* parse options */
   char *server = NULL, *user = NULL, *password = NULL, *group = NULL, 
-       *database = DEFAULT_DATABASE;
+       *db_filename = DEFAULT_DATABASE;
 
   while (1)
   {
@@ -224,7 +224,7 @@ main(argc, argv)
         group = optarg;
         break;
       case 'd':
-        database = optarg;
+        db_filename = optarg;
         break;
       case '?':
         /* getopt_long already printed an error message. */
@@ -285,100 +285,33 @@ main(argc, argv)
   }
   nntp_response_free(n_res); n_res = NULL;
 
-  /* open the sqlite database */
-  if ((f = fopen(database, "r")) != NULL) {
-    migrate = 0;
-    fclose(f);
-  }
-  else {
-    /* schema needs to be created */
-    migrate = 1;
-  }
-  res = sqlite3_open(database, &s_db);
-  if (res != SQLITE_OK) {
+  /* database setup */
+  db = database_open(db_filename);
+  if (!db) {
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
-    fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(s_db));
     return 1;
   }
-
-  /* create schema if necessary */
-  if (migrate) {
-    article_id = 0;
-    res = sqlite3_exec(s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)", NULL, NULL, NULL);
-    if (res == 0) {
-      res = sqlite3_exec(s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER, group_id INTEGER, subject TEXT)", NULL, NULL, NULL);
-    }
-    if (res != 0) {
-      sqlite3_close(s_db);
-      nntp_group_free(n_group);
-      nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't create schema.\n");
-      return 1;
-    }
-  }
-
-  /* find or create group; find last article id that we know about */
-  res = sqlite3_prepare_v2(s_db, "SELECT id FROM groups WHERE name = ?", -1, &s_stmt, NULL);
-  if (res != SQLITE_OK) {
-    sqlite3_close(s_db);
+  group_id = database_find_or_create_group(db, group);
+  if (group_id < 0) {
+    database_close(db);
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
-    fprintf(stderr, "Couldn't prepare statement.\n");
     return 1;
   }
-  sqlite3_bind_text(s_stmt, 1, group, strlen(group), SQLITE_STATIC);
-  res = sqlite3_step(s_stmt);
-  if (res == SQLITE_ROW) {
-    /* group exists; get latest article_id */
-    group_id = sqlite3_column_int(s_stmt, 0);
-    sqlite3_finalize(s_stmt);
-
-    res = sqlite3_prepare_v2(s_db, "SELECT article_id FROM articles WHERE group_id = ? ORDER BY article_id DESC LIMIT 1", -1, &s_stmt, NULL);
-    sqlite3_bind_int(s_stmt, 1, group_id);
-    if (res != SQLITE_OK) {
-      sqlite3_close(s_db);
-      nntp_group_free(n_group);
-      nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't prepare statement.\n");
-      return 1;
-    }
-    res = sqlite3_step(s_stmt);
-    article_id = res == SQLITE_ROW ? sqlite3_column_int(s_stmt, 0) : 0;
-    sqlite3_finalize(s_stmt);
-  }
-  else {
-    /* create group */
-    sqlite3_finalize(s_stmt);
-    res = sqlite3_prepare_v2(s_db, "INSERT INTO groups (name) VALUES (?)", -1, &s_stmt, NULL);
-    if (res != SQLITE_OK) {
-      sqlite3_close(s_db);
-      nntp_group_free(n_group);
-      nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't prepare statement.\n");
-      return 1;
-    }
-    sqlite3_bind_text(s_stmt, 1, group, strlen(group), SQLITE_STATIC);
-    res = sqlite3_step(s_stmt);
-    sqlite3_finalize(s_stmt);
-    if (res == SQLITE_DONE) {
-      group_id = (int)sqlite3_last_insert_rowid(s_db);
-    }
-    else {
-      sqlite3_close(s_db);
-      nntp_group_free(n_group);
-      nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't insert group.\n");
-      return 1;
-    }
-    article_id = 0;
+  article_id = database_last_article_id_for_group(db, group_id);
+  if (article_id < 0) {
+    database_close(db);
+    nntp_group_free(n_group);
+    nntp_shutdown(n_conn, n_res);
+    return 1;
   }
 
   /* grab the headers! */
-  res = sqlite3_prepare_v2(s_db, "INSERT INTO articles (article_id, group_id, subject) VALUES (?, ?, ?)", -1, &s_stmt, NULL);
+  res = sqlite3_prepare_v2(db->s_db, "INSERT INTO articles (article_id, group_id, subject) VALUES (?, ?, ?)", -1, &db->s_stmt, NULL);
   if (res != SQLITE_OK) {
     free(headers);
-    sqlite3_close(s_db);
+    database_close(db);
     nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
     fprintf(stderr, "Couldn't prepare SQL statement.\n");
@@ -403,7 +336,7 @@ main(argc, argv)
     nntp_response_free(n_res); n_res = NULL;
 
     if (headers == NULL) {
-      sqlite3_close(s_db);
+      database_close(db);
       nntp_group_free(n_group);
       nntp_shutdown(n_conn, n_res);
       fprintf(stderr, "Couldn't fetch headers.\n");
@@ -413,7 +346,7 @@ main(argc, argv)
     /* insert headers into database */
     h_tail = h_cur = headers;
     do {
-      res = sqlite3_exec(s_db, "BEGIN", NULL, NULL, NULL);
+      res = sqlite3_exec(db->s_db, "BEGIN", NULL, NULL, NULL);
       if (res == SQLITE_BUSY) {
         fprintf(stderr, "Database is busy.  Sleeping...\n");
         sleep(1);
@@ -436,14 +369,14 @@ main(argc, argv)
       while (*h_cur == ' ')
         h_cur++;
 
-      sqlite3_bind_int(s_stmt, 1, article_id);
-      sqlite3_bind_int(s_stmt, 2, group_id);
-      sqlite3_bind_text(s_stmt, 3, h_cur, h_tail - h_cur, SQLITE_STATIC);
+      sqlite3_bind_int(db->s_stmt, 1, article_id);
+      sqlite3_bind_int(db->s_stmt, 2, group_id);
+      sqlite3_bind_text(db->s_stmt, 3, h_cur, h_tail - h_cur, SQLITE_STATIC);
       do {
-        res = sqlite3_step(s_stmt);
+        res = sqlite3_step(db->s_stmt);
         if (res == SQLITE_DONE) {
-          sqlite3_reset(s_stmt);
-          sqlite3_clear_bindings(s_stmt);
+          sqlite3_reset(db->s_stmt);
+          sqlite3_clear_bindings(db->s_stmt);
           h_cur = h_tail + 2;
           count++;
         }
@@ -460,7 +393,7 @@ main(argc, argv)
     free(headers);
 
     do {
-      res = sqlite3_exec(s_db, "COMMIT", NULL, NULL, NULL);
+      res = sqlite3_exec(db->s_db, "COMMIT", NULL, NULL, NULL);
       if (res == SQLITE_BUSY) {
         fprintf(stderr, "Database is busy.  Sleeping...\n");
         sleep(1);
@@ -475,8 +408,8 @@ main(argc, argv)
 #endif
   }
 
-  sqlite3_finalize(s_stmt);
-  sqlite3_close(s_db);
+  sqlite3_finalize(db->s_stmt);
+  database_close(db);
   nntp_group_free(n_group);
   nntp_shutdown(n_conn, n_res);
   return 0;

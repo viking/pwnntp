@@ -15,8 +15,11 @@ group.o: group.c group.h
 response.o: response.c response.h
 	gcc $(CFLAGS) -c response.c -o response.o
 
-pwnntp: main.o conn.o group.o response.o
-	gcc main.o conn.o group.o response.o -o pwnntp -lssl -lsqlite3 -lz
+database.o: database.c database.h
+	gcc $(CFLAGS) -c database.c -o database.o
+
+pwnntp: main.o conn.o group.o response.o database.o
+	gcc main.o conn.o group.o response.o database.o -o pwnntp -lssl -lsqlite3 -lz
 
 clean:
 	rm -f *.o pwnntp

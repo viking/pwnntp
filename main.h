@@ -6,7 +6,6 @@
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include <sqlite3.h>
 #include <zlib.h>
 #include <getopt.h>
 

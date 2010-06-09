@@ -2,3 +2,4 @@
 *.sqlite3
 run.sh
 pwnntp
+output.txt
