@@ -4,6 +4,7 @@
 #include "conn.h"
 
 #define NNTP_OK 200
+#define NNTP_QUIT 205
 #define NNTP_GROUP_OK 211
 #define NNTP_XZHDR_OK 221
 #define NNTP_AUTH_OK 281

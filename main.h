@@ -9,8 +9,8 @@
 #include <zlib.h>
 #include <getopt.h>
 
-#define LIMIT 10000
-#define CHUNK 16384
+#define LIMIT 100000
+#define CHUNK 262144
 #define DEFAULT_DATABASE "pwnntp.sqlite3"
 #define YENC_LINE "=ybegin line=128 size=-1\r\n"
 

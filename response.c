@@ -38,6 +38,9 @@ nntp_receive(n_conn)
   if (strcmp("200", n_res->code) == 0) {
     n_res->status = NNTP_OK;
   }
+  if (strcmp("205", n_res->code) == 0) {
+    n_res->status = NNTP_QUIT;
+  }
   else if (strcmp("211", n_res->code) == 0) {
     n_res->status = NNTP_GROUP_OK;
   }

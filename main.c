@@ -153,6 +153,10 @@ nntp_shutdown(n_conn, n_res)
   if (n_res != NULL)
     nntp_response_free(n_res);
 
+  nntp_send(n_conn, "QUIT\r\n");
+  n_res = nntp_receive(n_conn);
+  nntp_response_free(n_res);
+
   if (n_conn != NULL)
     nntp_conn_free(n_conn);
 }
@@ -191,11 +195,6 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
 
   /* insert headers into database */
   h_tail = h_cur = headers;
-  if (database_begin(db) > 0) {
-    free(headers);
-    return -1;
-  }
-
   while (*h_cur != 0) {
     h_tail = strstr(h_cur, "\r\n");
     if (h_tail == NULL) {
@@ -238,9 +237,6 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
   }
   free(headers);
 
-  if (database_commit(db) > 0) {
-    return -1;
-  }
 #ifdef DEBUG
   fprintf(stderr, "Number of valid headers for this batch: %d.\n", count);
 #endif
@@ -400,8 +396,7 @@ main(argc, argv)
 
   /* grab the headers! */
   i = article_id == 0 ? group_low : article_id + 1;
-  int foo = 0;
-  while (i < group_high && foo < 1) {
+  while (i < group_high) {
     count = process_headers(n_conn, db, articles, "Subject", i, i + LIMIT - 1, group_id, 0);
     if (count < 0) {
       database_close(db);
@@ -417,6 +412,10 @@ main(argc, argv)
     }
 
     /* insert articles */
+    if (database_begin(db) > 0) {
+      break;
+    }
+
     res = 0;
     for (j = 0; j < count; j++) {
       if (res >= 0) {
@@ -432,8 +431,14 @@ main(argc, argv)
       }
     }
 
+    if (database_commit(db) > 0) {
+      break;
+    }
+
     i += LIMIT;
-    foo++;
+#ifdef DEBUG
+    fprintf(stderr, "======================\n");
+#endif
   }
 
   database_close(db);
