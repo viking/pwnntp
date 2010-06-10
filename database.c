@@ -1,5 +1,27 @@
 #include "database.h"
 
+static int
+database_prepare(db, stmt_type, sql)
+  database *db;
+  enum stmt_types stmt_type;
+  const char *sql;
+{
+  int res;
+  if (stmt_type == tmp_stmt || db->stmt_type != stmt_type) {
+    if (db->stmt_type != blank_stmt)
+      sqlite3_finalize(db->s_stmt);
+
+    res = sqlite3_prepare_v2(db->s_db, sql, -1, &db->s_stmt, NULL);
+    if (res != SQLITE_OK) {
+      fprintf(stderr, "Couldn't prepare statement: %s\n", sqlite3_errmsg(db->s_db));
+      db->stmt_type = blank_stmt;
+      return 1;
+    }
+    db->stmt_type = stmt_type;
+  }
+  return 0;
+}
+
 database *
 database_open(filename)
   const char *filename;
@@ -11,6 +33,7 @@ database_open(filename)
   db = (database *)malloc(sizeof(database));
   db->s_db = NULL;
   db->s_stmt = NULL;
+  db->stmt_type = blank_stmt;
 
   /* open the sqlite database */
   if ((f = fopen(filename, "r")) != NULL) {
@@ -52,6 +75,8 @@ void
 database_close(db)
   database *db;
 {
+  if (db->stmt_type != blank_stmt)
+    sqlite3_finalize(db->s_stmt);
   sqlite3_close(db->s_db);
   free(db);
 }
@@ -64,9 +89,8 @@ database_find_or_create_group(db, group)
   int res, group_id;
 
   /* find or create group; find last article id that we know about */
-  res = sqlite3_prepare_v2(db->s_db, "SELECT id FROM groups WHERE name = ?", -1, &db->s_stmt, NULL);
-  if (res != SQLITE_OK) {
-    fprintf(stderr, "Couldn't prepare statement: %s\n", sqlite3_errmsg(db->s_db));
+  res = database_prepare(db, tmp_stmt, "SELECT id FROM groups WHERE name = ?");
+  if (res > 0) {
     return -1;
   }
   sqlite3_bind_text(db->s_stmt, 1, group, strlen(group), SQLITE_STATIC);
@@ -74,19 +98,15 @@ database_find_or_create_group(db, group)
   if (res == SQLITE_ROW) {
     /* group exists; get latest article_id */
     group_id = sqlite3_column_int(db->s_stmt, 0);
-    sqlite3_finalize(db->s_stmt);
   }
   else {
     /* create group */
-    sqlite3_finalize(db->s_stmt);
-    res = sqlite3_prepare_v2(db->s_db, "INSERT INTO groups (name) VALUES (?)", -1, &db->s_stmt, NULL);
-    if (res != SQLITE_OK) {
-      fprintf(stderr, "Couldn't prepare statement: %s\n", sqlite3_errmsg(db->s_db));
+    res = database_prepare(db, tmp_stmt, "INSERT INTO groups (name) VALUES (?)");
+    if (res > 0) {
       return -1;
     }
     sqlite3_bind_text(db->s_stmt, 1, group, strlen(group), SQLITE_STATIC);
     res = sqlite3_step(db->s_stmt);
-    sqlite3_finalize(db->s_stmt);
 
     if (res == SQLITE_DONE) {
       group_id = (int)sqlite3_last_insert_rowid(db->s_db);
@@ -106,16 +126,92 @@ database_last_article_id_for_group(db, group_id)
 {
   int res, article_id;
 
-  res = sqlite3_prepare_v2(db->s_db, "SELECT article_id FROM articles WHERE group_id = ? ORDER BY article_id DESC LIMIT 1", -1, &db->s_stmt, NULL);
-  if (res != SQLITE_OK) {
-    fprintf(stderr, "Couldn't prepare statement: %s\n", sqlite3_errmsg(db->s_db));
+  res = database_prepare(db, tmp_stmt, "SELECT article_id FROM articles WHERE group_id = ? ORDER BY article_id DESC LIMIT 1");
+  if (res > 0) {
     return -1;
   }
   sqlite3_bind_int(db->s_stmt, 1, group_id);
 
   res = sqlite3_step(db->s_stmt);
   article_id = res == SQLITE_ROW ? sqlite3_column_int(db->s_stmt, 0) : 0;
-  sqlite3_finalize(db->s_stmt);
 
   return article_id;
+}
+
+int
+database_begin(db)
+  database *db;
+{
+  int res;
+  do {
+    res = sqlite3_exec(db->s_db, "BEGIN", NULL, NULL, NULL);
+    if (res == SQLITE_BUSY) {
+      fprintf(stderr, "Database is busy.  Sleeping...\n");
+      sleep(1);
+    }
+    else if (res != 0) {
+      fprintf(stderr, "Couldn't start the transaction: %s\n", sqlite3_errmsg(db->s_db));
+      return 1;
+    }
+  } while (res == SQLITE_BUSY);
+
+  return 0;
+}
+
+int
+database_commit(db)
+  database *db;
+{
+  int res;
+  do {
+    res = sqlite3_exec(db->s_db, "COMMIT", NULL, NULL, NULL);
+    if (res == SQLITE_BUSY) {
+      fprintf(stderr, "Database is busy.  Sleeping...\n");
+      sleep(1);
+    }
+    else if (res != 0) {
+      fprintf(stderr, "Couldn't commit the transaction: %d\n", res);
+      return 1;
+    }
+  } while (res == SQLITE_BUSY);
+
+  return 0;
+}
+
+int
+database_insert_article(db, article_id, group_id, subject, slen, message_id, mlen)
+  database *db;
+  int article_id;
+  int group_id;
+  const char *subject;
+  int slen;
+  const char *message_id;
+  int mlen;
+{
+  int res;
+  res = database_prepare(db, insert_article_stmt, "INSERT INTO articles (article_id, group_id, subject, message_id) VALUES (?, ?, ?, ?)");
+  if (res > 0) {
+    return -1;
+  }
+
+  sqlite3_bind_int(db->s_stmt, 1, article_id);
+  sqlite3_bind_int(db->s_stmt, 2, group_id);
+  sqlite3_bind_text(db->s_stmt, 3, subject, slen, SQLITE_STATIC);
+  sqlite3_bind_text(db->s_stmt, 4, message_id, mlen, SQLITE_STATIC);
+  while (1) {
+    res = sqlite3_step(db->s_stmt);
+    if (res == SQLITE_DONE) {
+      sqlite3_reset(db->s_stmt);
+      sqlite3_clear_bindings(db->s_stmt);
+      return (int)sqlite3_last_insert_rowid(db->s_db);
+    }
+    else if (res == SQLITE_BUSY) {
+      fprintf(stderr, "Database is busy.  Sleeping...\n");
+      sleep(1);
+    }
+    else {
+      fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %d, group_id: %d\n", sqlite3_errmsg(db->s_db), article_id, group_id);
+      return -1;
+    }
+  }
 }

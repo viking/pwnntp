@@ -157,6 +157,96 @@ nntp_shutdown(n_conn, n_res)
     nntp_conn_free(n_conn);
 }
 
+int
+process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
+  nntp_conn *n_conn;
+  database *db;
+  article *articles;
+  const char *hdr;
+  int low;
+  int high;
+  int group_id;
+  int update;
+{
+  int count = 0, len, res, article_id;
+  char cmd[1024], *headers, *h_cur, *h_tail;
+  nntp_response *n_res;
+
+  sprintf(cmd, "XZHDR %s %d-%d\r\n", hdr, low, high);
+  nntp_send(n_conn, cmd);
+  n_res = nntp_receive(n_conn);
+  if (n_res->status == NNTP_XZHDR_OK) {
+    headers = nntp_decode_headers((char *)n_res->data);
+  }
+  else {
+    headers = NULL;
+  }
+  free(n_res->data);
+  nntp_response_free(n_res);
+
+  if (headers == NULL) {
+    fprintf(stderr, "Couldn't fetch headers.\n");
+    return -1;
+  }
+
+  /* insert headers into database */
+  h_tail = h_cur = headers;
+  if (database_begin(db) > 0) {
+    free(headers);
+    return -1;
+  }
+
+  while (*h_cur != 0) {
+    h_tail = strstr(h_cur, "\r\n");
+    if (h_tail == NULL) {
+      fprintf(stderr, "Invalid header record found.\n");
+      break;
+    }
+
+    article_id = (int)strtol(h_cur, &h_cur, 10);
+    if (article_id == 0) {
+      fprintf(stderr, "Invalid article id.\n");
+      break;
+    }
+
+    while (*h_cur == ' ')
+      h_cur++;
+
+    if (!update) {
+      articles[count].article_id = article_id;
+      articles[count].group_id = group_id;
+    }
+    else if (articles[count].article_id != article_id) {
+      fprintf(stderr, "Article doesn't match.\n");
+      break;
+    }
+
+    len = h_tail - h_cur;
+    if (strcmp(hdr, "Subject") == 0) {
+      articles[count].subject = (char *)malloc(sizeof(char) * len);
+      strncpy(articles[count].subject, h_cur, len);
+      articles[count].slen = len;
+    }
+    else if (strcmp(hdr, "Message-ID") == 0) {
+      articles[count].message_id = (char *)malloc(sizeof(char) * len);
+      strncpy(articles[count].message_id, h_cur, len);
+      articles[count].mlen = len;
+    }
+
+    h_cur = h_tail + 2;
+    count++;
+  }
+  free(headers);
+
+  if (database_commit(db) > 0) {
+    return -1;
+  }
+#ifdef DEBUG
+  fprintf(stderr, "Number of valid headers for this batch: %d.\n", count);
+#endif
+  return count;
+}
+
 void
 print_syntax(name)
   const char *name;
@@ -174,16 +264,17 @@ main(argc, argv)
   int argc;
   char *argv[];
 {
-  int i, c, len, article_id, group_id, res, migrate, abort, count;
-  char cmd[1024], *headers, *h_cur, *h_tail;
+  int i, j, count, c, len, article_id, group_id, res, migrate, group_low, group_high;
+  char cmd[1024];
   FILE *f = NULL;
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
   nntp_group *n_group = NULL;
   database *db = NULL;
+  article articles[LIMIT];
 
   /* parse options */
-  char *server = NULL, *user = NULL, *password = NULL, *group = NULL, 
+  char *server = NULL, *user = NULL, *password = NULL, *group = NULL,
        *db_filename = DEFAULT_DATABASE;
 
   while (1)
@@ -277,6 +368,9 @@ main(argc, argv)
   n_res = nntp_receive(n_conn);
   if (n_res->status == NNTP_GROUP_OK) {
     n_group = (nntp_group *)n_res->data;
+    group_low = n_group->low;
+    group_high = n_group->high;
+    nntp_group_free(n_group);
   }
   else {
     nntp_shutdown(n_conn, n_res);
@@ -288,129 +382,61 @@ main(argc, argv)
   /* database setup */
   db = database_open(db_filename);
   if (!db) {
-    nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
   group_id = database_find_or_create_group(db, group);
   if (group_id < 0) {
     database_close(db);
-    nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
   article_id = database_last_article_id_for_group(db, group_id);
   if (article_id < 0) {
     database_close(db);
-    nntp_group_free(n_group);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
 
   /* grab the headers! */
-  res = sqlite3_prepare_v2(db->s_db, "INSERT INTO articles (article_id, group_id, subject) VALUES (?, ?, ?)", -1, &db->s_stmt, NULL);
-  if (res != SQLITE_OK) {
-    free(headers);
-    database_close(db);
-    nntp_group_free(n_group);
-    nntp_shutdown(n_conn, n_res);
-    fprintf(stderr, "Couldn't prepare SQL statement.\n");
-    return 1;
-  }
-
-  abort = 0;
-  i = article_id == 0 ? n_group->low : article_id + 1;
-  while(i < n_group->high && abort == 0) {
-    count = 0;
-    sprintf(cmd, "XZHDR Subject %d-%d\r\n", i, i + LIMIT - 1);
-    i += LIMIT;
-    nntp_send(n_conn, cmd);
-    n_res = nntp_receive(n_conn);
-    if (n_res->status == NNTP_XZHDR_OK) {
-      headers = nntp_decode_headers((char *)n_res->data);
-    }
-    else {
-      headers = NULL;
-    }
-    free(n_res->data);
-    nntp_response_free(n_res); n_res = NULL;
-
-    if (headers == NULL) {
+  i = article_id == 0 ? group_low : article_id + 1;
+  int foo = 0;
+  while (i < group_high && foo < 1) {
+    count = process_headers(n_conn, db, articles, "Subject", i, i + LIMIT - 1, group_id, 0);
+    if (count < 0) {
       database_close(db);
-      nntp_group_free(n_group);
       nntp_shutdown(n_conn, n_res);
-      fprintf(stderr, "Couldn't fetch headers.\n");
       return 1;
     }
 
-    /* insert headers into database */
-    h_tail = h_cur = headers;
-    do {
-      res = sqlite3_exec(db->s_db, "BEGIN", NULL, NULL, NULL);
-      if (res == SQLITE_BUSY) {
-        fprintf(stderr, "Database is busy.  Sleeping...\n");
-        sleep(1);
-      }
-      else if (res != 0) {
-        abort = 1;
-        fprintf(stderr, "Couldn't start the transaction: %d\n", res);
-      }
-    } while (res == SQLITE_BUSY);
-
-    while (*h_cur != 0 && abort == 0) {
-      h_tail = strstr(h_cur, "\r\n");
-      if (h_tail == NULL) {
-        abort = 1;
-        fprintf(stderr, "Invalid header record found.\n");
-        break;
-      }
-
-      article_id = (int)strtol(h_cur, &h_cur, 10);
-      while (*h_cur == ' ')
-        h_cur++;
-
-      sqlite3_bind_int(db->s_stmt, 1, article_id);
-      sqlite3_bind_int(db->s_stmt, 2, group_id);
-      sqlite3_bind_text(db->s_stmt, 3, h_cur, h_tail - h_cur, SQLITE_STATIC);
-      do {
-        res = sqlite3_step(db->s_stmt);
-        if (res == SQLITE_DONE) {
-          sqlite3_reset(db->s_stmt);
-          sqlite3_clear_bindings(db->s_stmt);
-          h_cur = h_tail + 2;
-          count++;
-        }
-        else if (res == SQLITE_BUSY) {
-          fprintf(stderr, "Database is busy.  Sleeping...\n");
-          sleep(1);
-        }
-        else {
-          abort = 1;
-          fprintf(stderr, "Couldn't insert row (%d)\n  article_id: %d, group_id: %d\n", res, article_id, group_id);
-        }
-      } while (res == SQLITE_BUSY);
+    count = process_headers(n_conn, db, articles, "Message-ID", i, i + LIMIT - 1, group_id, 1);
+    if (count < 0) {
+      database_close(db);
+      nntp_shutdown(n_conn, n_res);
+      return 1;
     }
-    free(headers);
 
-    do {
-      res = sqlite3_exec(db->s_db, "COMMIT", NULL, NULL, NULL);
-      if (res == SQLITE_BUSY) {
-        fprintf(stderr, "Database is busy.  Sleeping...\n");
-        sleep(1);
+    /* insert articles */
+    res = 0;
+    for (j = 0; j < count; j++) {
+      if (res >= 0) {
+        res = database_insert_article(db,
+          articles[j].article_id,
+          articles[j].group_id,
+          articles[j].subject,
+          articles[j].slen,
+          articles[j].message_id,
+          articles[j].mlen);
+        free(articles[j].subject);
+        free(articles[j].message_id);
       }
-      else if (res != 0) {
-        abort = 1;
-        fprintf(stderr, "Couldn't commit the transaction: %d\n", res);
-      }
-    } while (res == SQLITE_BUSY);
-#ifdef DEBUG
-    fprintf(stderr, "Number of valid headers for this batch: %d.\n", count);
-#endif
+    }
+
+    i += LIMIT;
+    foo++;
   }
 
-  sqlite3_finalize(db->s_stmt);
   database_close(db);
-  nntp_group_free(n_group);
   nntp_shutdown(n_conn, n_res);
   return 0;
 }

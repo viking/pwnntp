@@ -6,14 +6,24 @@
 #include <string.h>
 #include <sqlite3.h>
 
+enum stmt_types {
+  blank_stmt,
+  tmp_stmt,
+  insert_article_stmt
+};
+
 typedef struct {
   sqlite3 *s_db;
   sqlite3_stmt *s_stmt;
+  enum stmt_types stmt_type;
 } database;
 
 database *database_open(const char *);
 void database_close(database *);
 int database_find_or_create_group(database *, const char *);
 int database_last_article_id_for_group(database *, int);
+int database_begin(database *);
+int database_commit(database *);
+int database_insert_article(database *, int, int, const char *, int, const char *, int);
 
 #endif
