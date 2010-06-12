@@ -51,6 +51,9 @@ database_open(filename)
     database_close(db);
     return NULL;
   }
+#ifdef DEBUG
+  fprintf(stderr, "Opened database: %s\n", filename);
+#endif
 
   /* create schema if necessary */
   if (migrate) {

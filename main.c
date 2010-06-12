@@ -257,6 +257,24 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
   return count;
 }
 
+static char timestamp[100];
+
+void
+set_timestamp()
+{
+  time_t t;
+  struct tm *tmp;
+
+  t = time(NULL);
+  if ((tmp = localtime(&t)) == NULL) {
+    fprintf(stderr, "Couldn't get localtime.\n");
+    return;
+  }
+  if (strftime(timestamp, 100, "%a, %d %b %Y %H:%M:%S %z", tmp) == 0) {
+    fprintf(stderr, "Couldn't strftime.\n");
+  }
+}
+
 void
 print_syntax(name)
   const char *name;
@@ -267,6 +285,7 @@ print_syntax(name)
   printf("  -p, --password PASSWORD\n");
   printf("  -g, --group GROUP\n");
   printf("  -d, --database DATABASE   (default: pwnntp.sqlite3)\n");
+  printf("  -l, --log FILE\n");
 }
 
 int
@@ -274,9 +293,10 @@ main(argc, argv)
   int argc;
   char *argv[];
 {
-  int i, j, count, c, len, article_id, group_id, res, migrate, group_low, group_high;
+  int i, j, count, c, len, article_id, group_id, res, migrate,
+      group_low, group_high, upper, lower;
   char cmd[1024], *hdr;
-  FILE *f = NULL;
+  FILE *f = NULL, *log = NULL;
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
   nntp_group *n_group = NULL;
@@ -285,7 +305,7 @@ main(argc, argv)
 
   /* parse options */
   char *server = NULL, *user = NULL, *password = NULL, *group = NULL,
-       *db_filename = DEFAULT_DATABASE;
+       *db_filename = DEFAULT_DATABASE, *logfile = NULL;
 
   while (1)
   {
@@ -296,11 +316,12 @@ main(argc, argv)
       {"password", required_argument, 0, 'p'},
       {"group"   , required_argument, 0, 'g'},
       {"database", required_argument, 0, 'd'},
+      {"log",      required_argument, 0, 'l'},
       {0, 0, 0, 0}
     };
     /* getopt_long stores the option index here. */
     int option_index = 0;
-    c = getopt_long (argc, argv, "s:u:p:g:d:", long_options, &option_index);
+    c = getopt_long (argc, argv, "s:u:p:g:d:l:", long_options, &option_index);
 
     /* Detect the end of the options. */
     if (c == -1)
@@ -327,6 +348,9 @@ main(argc, argv)
       case 'd':
         db_filename = optarg;
         break;
+      case 'l':
+        logfile = optarg;
+        break;
       case '?':
         /* getopt_long already printed an error message. */
         break;
@@ -337,7 +361,18 @@ main(argc, argv)
   }
   if (server == NULL || user == NULL || password == NULL || group == NULL) {
     print_syntax(argv[0]);
-    return(1);
+    return 1;
+  }
+  if (logfile != NULL) {
+    log = fopen(logfile, "a");
+    if (log == NULL) {
+      fprintf(stderr, "Couldn't open logfile %s.\n", logfile);
+      return 1;
+    }
+    set_timestamp();
+    fprintf(log, "%s: Started pwnntp\n", timestamp);
+    fprintf(log, "%s:   Server: %s, User: %s, Group: %s\n", timestamp, server, user, group);
+    fflush(log);
   }
 
   nntp_init();
@@ -350,6 +385,8 @@ main(argc, argv)
   }
   if (n_res->status != NNTP_OK) {
     fprintf(stderr, "Status wasn't OK.\n");
+    if (log != NULL)
+      fclose(log);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
@@ -367,6 +404,8 @@ main(argc, argv)
   n_res = nntp_receive(n_conn);
   if (n_res->status != NNTP_AUTH_OK) {
     fprintf(stderr, "Authentication was unsuccessful.\n");
+    if (log != NULL)
+      fclose(log);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
@@ -383,6 +422,8 @@ main(argc, argv)
     nntp_group_free(n_group);
   }
   else {
+    if (log != NULL)
+      fclose(log);
     nntp_shutdown(n_conn, n_res);
     fprintf(stderr, "Group command wasn't successful.\n");
     return 1;
@@ -392,17 +433,23 @@ main(argc, argv)
   /* database setup */
   db = database_open(db_filename);
   if (!db) {
+    if (log != NULL)
+      fclose(log);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
   group_id = database_find_or_create_group(db, group);
   if (group_id < 0) {
+    if (log != NULL)
+      fclose(log);
     database_close(db);
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
   article_id = database_last_article_id_for_group(db, group_id);
   if (article_id < 0) {
+    if (log != NULL)
+      fclose(log);
     database_close(db);
     nntp_shutdown(n_conn, n_res);
     return 1;
@@ -411,9 +458,18 @@ main(argc, argv)
   /* grab the headers! */
   i = article_id == 0 ? group_low : article_id + 1;
   while (i < group_high) {
+    lower = i; upper = i + LIMIT - 1;
+    if (log != NULL) {
+      set_timestamp();
+      fprintf(log, "%s: Headers %d - %d\n", timestamp, lower, upper);
+      fflush(log);
+    }
+
     for (j = 0, hdr = headers[0]; hdr != NULL; hdr = headers[++j]) {
-      count = process_headers(n_conn, db, articles, hdr, i, i + LIMIT - 1, group_id, j);
+      count = process_headers(n_conn, db, articles, hdr, lower, upper, group_id, j);
       if (count < 0) {
+        if (log != NULL)
+          fclose(log);
         database_close(db);
         nntp_shutdown(n_conn, n_res);
         return 1;
@@ -444,6 +500,11 @@ main(argc, argv)
 #endif
   }
 
+  if (log != NULL) {
+    set_timestamp();
+    fprintf(log, "%s: pwnntp finished\n", timestamp);
+    fclose(log);
+  }
   database_close(db);
   nntp_shutdown(n_conn, n_res);
   return 0;
