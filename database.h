@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sqlite3.h>
+#include "article.h"
 
 enum stmt_types {
   blank_stmt,
@@ -24,6 +25,6 @@ int database_find_or_create_group(database *, const char *);
 int database_last_article_id_for_group(database *, int);
 int database_begin(database *);
 int database_commit(database *);
-int database_insert_article(database *, int, int, const char *, int, const char *, int);
+int database_insert_article(database *, article *);
 
 #endif

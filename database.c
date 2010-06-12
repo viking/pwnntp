@@ -56,7 +56,7 @@ database_open(filename)
   if (migrate) {
     res = sqlite3_exec(db->s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)", NULL, NULL, NULL);
     if (res == 0) {
-      res = sqlite3_exec(db->s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER, group_id INTEGER, subject TEXT, message_id TEXT)", NULL, NULL, NULL);
+      res = sqlite3_exec(db->s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER, group_id INTEGER, subject TEXT, message_id TEXT, poster TEXT, posted_at TEXT, bytes INTEGER)", NULL, NULL, NULL);
     }
     if (res == 0) {
       res = sqlite3_exec(db->s_db, "CREATE INDEX articles_article_id ON articles (article_id)", NULL, NULL, NULL);
@@ -179,25 +179,23 @@ database_commit(db)
 }
 
 int
-database_insert_article(db, article_id, group_id, subject, slen, message_id, mlen)
+database_insert_article(db, a)
   database *db;
-  int article_id;
-  int group_id;
-  const char *subject;
-  int slen;
-  const char *message_id;
-  int mlen;
+  article *a;
 {
   int res;
-  res = database_prepare(db, insert_article_stmt, "INSERT INTO articles (article_id, group_id, subject, message_id) VALUES (?, ?, ?, ?)");
+  res = database_prepare(db, insert_article_stmt, "INSERT INTO articles (article_id, group_id, subject, message_id, poster, posted_at, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)");
   if (res > 0) {
     return -1;
   }
 
-  sqlite3_bind_int(db->s_stmt, 1, article_id);
-  sqlite3_bind_int(db->s_stmt, 2, group_id);
-  sqlite3_bind_text(db->s_stmt, 3, subject, slen, SQLITE_STATIC);
-  sqlite3_bind_text(db->s_stmt, 4, message_id, mlen, SQLITE_STATIC);
+  sqlite3_bind_int(db->s_stmt, 1, a->article_id);
+  sqlite3_bind_int(db->s_stmt, 2, a->group_id);
+  sqlite3_bind_text(db->s_stmt, 3, a->subject, a->slen, SQLITE_STATIC);
+  sqlite3_bind_text(db->s_stmt, 4, a->message_id, a->mlen, SQLITE_STATIC);
+  sqlite3_bind_text(db->s_stmt, 5, a->poster, a->plen, SQLITE_STATIC);
+  sqlite3_bind_text(db->s_stmt, 6, a->posted_at, a->wlen, SQLITE_STATIC);
+  sqlite3_bind_int(db->s_stmt, 7, a->bytes);
   while (1) {
     res = sqlite3_step(db->s_stmt);
     if (res == SQLITE_DONE) {
@@ -210,7 +208,7 @@ database_insert_article(db, article_id, group_id, subject, slen, message_id, mle
       sleep(1);
     }
     else {
-      fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %d, group_id: %d\n", sqlite3_errmsg(db->s_db), article_id, group_id);
+      fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %d, group_id: %d\n", sqlite3_errmsg(db->s_db), a->article_id, a->group_id);
       return -1;
     }
   }

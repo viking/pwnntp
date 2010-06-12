@@ -3,6 +3,7 @@
 #include "group.h"
 #include "response.h"
 #include "database.h"
+#include "article.h"
 
 char *
 nntp_decode_headers(data)
@@ -211,7 +212,7 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
     while (*h_cur == ' ')
       h_cur++;
 
-    if (!update) {
+    if (update == 0) {
       articles[count].article_id = article_id;
       articles[count].group_id = group_id;
     }
@@ -230,6 +231,19 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
       articles[count].message_id = (char *)malloc(sizeof(char) * len);
       strncpy(articles[count].message_id, h_cur, len);
       articles[count].mlen = len;
+    }
+    else if (strcmp(hdr, "From") == 0) {
+      articles[count].poster = (char *)malloc(sizeof(char) * len);
+      strncpy(articles[count].poster, h_cur, len);
+      articles[count].plen = len;
+    }
+    else if (strcmp(hdr, "Date") == 0) {
+      articles[count].posted_at = (char *)malloc(sizeof(char) * len);
+      strncpy(articles[count].posted_at, h_cur, len);
+      articles[count].wlen = len;
+    }
+    else if (strcmp(hdr, "Bytes") == 0) {
+      articles[count].bytes = (int)strtol(h_cur, NULL, 10);
     }
 
     h_cur = h_tail + 2;
@@ -261,7 +275,7 @@ main(argc, argv)
   char *argv[];
 {
   int i, j, count, c, len, article_id, group_id, res, migrate, group_low, group_high;
-  char cmd[1024];
+  char cmd[1024], *hdr;
   FILE *f = NULL;
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
@@ -397,40 +411,29 @@ main(argc, argv)
   /* grab the headers! */
   i = article_id == 0 ? group_low : article_id + 1;
   while (i < group_high) {
-    count = process_headers(n_conn, db, articles, "Subject", i, i + LIMIT - 1, group_id, 0);
-    if (count < 0) {
-      database_close(db);
-      nntp_shutdown(n_conn, n_res);
-      return 1;
-    }
-
-    count = process_headers(n_conn, db, articles, "Message-ID", i, i + LIMIT - 1, group_id, 1);
-    if (count < 0) {
-      database_close(db);
-      nntp_shutdown(n_conn, n_res);
-      return 1;
-    }
-
-    /* insert articles */
-    if (database_begin(db) > 0) {
-      break;
-    }
-
-    res = 0;
-    for (j = 0; j < count; j++) {
-      if (res >= 0) {
-        res = database_insert_article(db,
-          articles[j].article_id,
-          articles[j].group_id,
-          articles[j].subject,
-          articles[j].slen,
-          articles[j].message_id,
-          articles[j].mlen);
-        free(articles[j].subject);
-        free(articles[j].message_id);
+    for (j = 0, hdr = headers[0]; hdr != NULL; hdr = headers[++j]) {
+      count = process_headers(n_conn, db, articles, hdr, i, i + LIMIT - 1, group_id, j);
+      if (count < 0) {
+        database_close(db);
+        nntp_shutdown(n_conn, n_res);
+        return 1;
       }
     }
 
+    /* insert articles */
+    res = 0;
+    if (database_begin(db) > 0) {
+      break;
+    }
+    for (j = 0; j < count; j++) {
+      if (res >= 0) {
+        res = database_insert_article(db, &articles[j]);
+        free(articles[j].subject);
+        free(articles[j].message_id);
+        free(articles[j].poster);
+        free(articles[j].posted_at);
+      }
+    }
     if (database_commit(db) > 0) {
       break;
     }

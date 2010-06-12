@@ -21,5 +21,8 @@ database.o: database.c database.h
 pwnntp: main.o conn.o group.o response.o database.o
 	gcc main.o conn.o group.o response.o database.o -o pwnntp -lssl -lsqlite3 -lz
 
+install: pwnntp
+	install pwnntp /usr/local/bin/pwnntp
+
 clean:
 	rm -f *.o pwnntp

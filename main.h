@@ -9,16 +9,13 @@
 #include <zlib.h>
 #include <getopt.h>
 
-#define LIMIT 100000
+#define LIMIT 10
 #define CHUNK 262144
 #define DEFAULT_DATABASE "pwnntp.sqlite3"
 #define YENC_LINE "=ybegin line=128 size=-1\r\n"
 
-typedef struct {
-  int article_id;
-  int group_id;
-  char *subject;
-  int slen;
-  char *message_id;
-  int mlen;
-} article;
+char *headers[] = {
+  "Subject", "Message-ID",
+  "From", "Date", "Bytes",
+  NULL
+};
