@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sqlite3.h>
+#include <errno.h>
 #include "article.h"
 
 enum stmt_types {

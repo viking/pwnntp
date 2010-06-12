@@ -40,9 +40,14 @@ database_open(filename)
     migrate = 0;
     fclose(f);
   }
-  else {
+  else if (errno == ENOENT) {
     /* schema needs to be created */
     migrate = 1;
+  }
+  else {
+    fprintf(stderr, "Couldn't open database: %s\n", strerror(errno));
+    free(db);
+    return NULL;
   }
 
   res = sqlite3_open(filename, &db->s_db);
