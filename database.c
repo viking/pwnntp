@@ -57,7 +57,7 @@ database_open(filename)
 
   /* create schema if necessary */
   if (migrate) {
-    res = sqlite3_exec(db->s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT)", NULL, NULL, NULL);
+    res = sqlite3_exec(db->s_db, "CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, last_article_id INTEGER)", NULL, NULL, NULL);
     if (res == 0) {
       res = sqlite3_exec(db->s_db, "CREATE TABLE articles (id INTEGER PRIMARY KEY, article_id INTEGER, group_id INTEGER, subject TEXT, message_id TEXT, poster TEXT, posted_at TEXT, bytes INTEGER)", NULL, NULL, NULL);
     }
@@ -129,7 +129,7 @@ database_last_article_id_for_group(db, group_id)
 {
   int res, article_id;
 
-  res = database_prepare(db, tmp_stmt, "SELECT article_id FROM articles WHERE group_id = ? ORDER BY article_id DESC LIMIT 1");
+  res = database_prepare(db, tmp_stmt, "SELECT last_article_id FROM groups WHERE id = ?");
   if (res > 0) {
     return -1;
   }
@@ -212,6 +212,35 @@ database_insert_article(db, a)
     }
     else {
       fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %d, group_id: %d\n", sqlite3_errmsg(db->s_db), a->article_id, a->group_id);
+      return -1;
+    }
+  }
+}
+
+int
+database_group_set_last_article_id(db, group_id, article_id)
+  database *db;
+  int group_id;
+  int article_id;
+{
+  int res;
+  res = database_prepare(db, tmp_stmt, "UPDATE groups SET last_article_id = ? WHERE id = ?");
+  if (res > 0) {
+    return -1;
+  }
+  sqlite3_bind_int(db->s_stmt, 1, article_id);
+  sqlite3_bind_int(db->s_stmt, 2, group_id);
+  while (1) {
+    res = sqlite3_step(db->s_stmt);
+    if (res == SQLITE_DONE) {
+      return 0;
+    }
+    else if (res == SQLITE_BUSY) {
+      fprintf(stderr, "Database is busy.  Sleeping...\n");
+      sleep(1);
+    }
+    else {
+      fprintf(stderr, "Couldn't update group (%s)\n", sqlite3_errmsg(db->s_db));
       return -1;
     }
   }

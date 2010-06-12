@@ -26,5 +26,6 @@ int database_last_article_id_for_group(database *, int);
 int database_begin(database *);
 int database_commit(database *);
 int database_insert_article(database *, article *);
+int database_group_set_last_article_id(database *, int, int);
 
 #endif

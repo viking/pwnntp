@@ -174,11 +174,11 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
   int update;
 {
   int count = 0, len, res, article_id;
-  char cmd[1024], *headers, *h_cur, *h_tail;
+  char tmp[1024], *headers, *h_cur, *h_tail;
   nntp_response *n_res;
 
-  sprintf(cmd, "XZHDR %s %d-%d\r\n", hdr, low, high);
-  nntp_send(n_conn, cmd);
+  sprintf(tmp, "XZHDR %s %d-%d\r\n", hdr, low, high);
+  nntp_send(n_conn, tmp);
   n_res = nntp_receive(n_conn);
   if (n_res->status == NNTP_XZHDR_OK) {
     headers = nntp_decode_headers((char *)n_res->data);
@@ -193,6 +193,13 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
     fprintf(stderr, "Couldn't fetch headers.\n");
     return -1;
   }
+#ifdef DEBUG
+  /*
+  strncpy(tmp, headers, 128);
+  tmp[128] = 0;
+  fprintf(stderr, "First bit of headers: %s\n", tmp);
+  */
+#endif
 
   /* insert headers into database */
   h_tail = h_cur = headers;
@@ -454,11 +461,24 @@ main(argc, argv)
     nntp_shutdown(n_conn, n_res);
     return 1;
   }
+  if (article_id >= group_high) {
+    if (log != NULL) {
+      set_timestamp();
+      fprintf(log, "%s: No articles to fetch.\n", timestamp);
+      fclose(log);
+    }
+    database_close(db);
+    nntp_shutdown(n_conn, n_res);
+    return 0;
+  }
 
   /* grab the headers! */
   i = article_id == 0 ? group_low : article_id + 1;
   while (i < group_high) {
     lower = i; upper = i + LIMIT - 1;
+    if (upper > group_high)
+      upper = group_high;
+
     if (log != NULL) {
       set_timestamp();
       fprintf(log, "%s: Headers %d - %d\n", timestamp, lower, upper);
@@ -468,6 +488,7 @@ main(argc, argv)
     for (j = 0, hdr = headers[0]; hdr != NULL; hdr = headers[++j]) {
       count = process_headers(n_conn, db, articles, hdr, lower, upper, group_id, j);
       if (count < 0) {
+        fprintf(stderr, "No headers!\n");
         if (log != NULL)
           fclose(log);
         database_close(db);
@@ -477,18 +498,24 @@ main(argc, argv)
     }
 
     /* insert articles */
-    res = 0;
+    article_id = 0;
     if (database_begin(db) > 0) {
       break;
     }
     for (j = 0; j < count; j++) {
-      if (res >= 0) {
+      if (j == 0 || res > 0) {
         res = database_insert_article(db, &articles[j]);
         free(articles[j].subject);
         free(articles[j].message_id);
         free(articles[j].poster);
         free(articles[j].posted_at);
+        if (res > 0) {
+          article_id = articles[j].article_id;
+        }
       }
+    }
+    if (article_id > 0) {
+      database_group_set_last_article_id(db, group_id, article_id);
     }
     if (database_commit(db) > 0) {
       break;
