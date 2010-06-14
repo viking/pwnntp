@@ -1,8 +1,8 @@
 all:
-	make -C src
+	make -C src all
 
 install: 
-	make -C install
+	make -C src install
 
 clean:
-	make -C clean
+	make -C src clean

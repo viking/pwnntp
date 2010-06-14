@@ -10,7 +10,7 @@
 #include <getopt.h>
 #include <time.h>
 
-#define LIMIT 100000
+#define LIMIT 10
 #define CHUNK 262144
 #define DEFAULT_DATABASE "pwnntp.sqlite3"
 #define YENC_LINE "=ybegin line=128 size=-1\r\n"

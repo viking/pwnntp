@@ -438,7 +438,7 @@ main(argc, argv)
   nntp_response_free(n_res); n_res = NULL;
 
   /* database setup */
-  db = database_open(db_filename);
+  db = database_open(sqlite, db_filename);
   if (!db) {
     if (log != NULL)
       fclose(log);
@@ -525,6 +525,7 @@ main(argc, argv)
 #ifdef DEBUG
     fprintf(stderr, "======================\n");
 #endif
+    break;
   }
 
   if (log != NULL) {
