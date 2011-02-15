@@ -525,7 +525,6 @@ main(argc, argv)
 #ifdef DEBUG
     fprintf(stderr, "======================\n");
 #endif
-    break;
   }
 
   if (log != NULL) {
