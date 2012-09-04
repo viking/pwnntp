@@ -12,8 +12,8 @@ xml.declare!(:DOCTYPE, :nzb, :PUBLIC, "-//newzBin//DTD NZB 1.0//EN", "http://www
 xml.nzb(:xmlns => "http://www.newzbin.com/DTD/2003/nzb") do |nzb|
   files = {}
   all_group_ids = []
-  db.execute("SELECT group_id, subject, message_id FROM articles WHERE subject LIKE '%#{search}%'") do |row|
-    group_id, subject, message_id = row
+  db.execute("SELECT group_id, subject, message_id, bytes FROM articles WHERE subject LIKE '%#{search}%'") do |row|
+    group_id, subject, message_id, bytes = row
 
     if md = subject.match(/#{regexp}\s*\((\d+)\/(\d+)\)\s*$/)
       file, part, total = md[1..3]
@@ -22,7 +22,7 @@ xml.nzb(:xmlns => "http://www.newzbin.com/DTD/2003/nzb") do |nzb|
         files[file] = { :num => total, :group_ids => [], :segments => [] }
       end
       files[file][:group_ids] << group_id  if !files[file][:group_ids].include?(group_id)
-      files[file][:segments]  << [part, message_id.sub(/^<?(.+?)>?$/, '\1')]
+      files[file][:segments]  << [part, message_id.sub(/^<?(.+?)>?$/, '\1'), bytes]
       all_group_ids << group_id   if !all_group_ids.include?(group_id)
     else
       $stderr.puts "Couldn't parse subject: #{subject}"
@@ -41,7 +41,7 @@ xml.nzb(:xmlns => "http://www.newzbin.com/DTD/2003/nzb") do |nzb|
 
       file.segments do |segments|
         info[:segments].each do |segment|
-          segments.segment(segment[1], :number => segment[0])
+          segments.segment(segment[1], :number => segment[0], :bytes => segment[2])
         end
       end
     end
