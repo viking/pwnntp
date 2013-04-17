@@ -11,6 +11,7 @@ database_prepare(db, stmt_type, sql)
     case sqlite:
       return database_sqlite_prepare(db, stmt_type, sql);
   }
+  return 1;
 }
 
 database *
@@ -26,6 +27,7 @@ database_open(enum db_types db_type, ...)
       va_end(ap);
       return database_sqlite_open(filename);
   }
+  return NULL;
 }
 
 void
@@ -38,7 +40,7 @@ database_close(db)
   }
 }
 
-int
+long long
 database_find_or_create_group(db, group)
   database *db;
   const char *group;
@@ -47,17 +49,19 @@ database_find_or_create_group(db, group)
     case sqlite:
       return database_sqlite_find_or_create_group(db, group);
   }
+  return -1;
 }
 
-int
+long long
 database_last_article_id_for_group(db, group_id)
   database *db;
-  int group_id;
+  long long group_id;
 {
   switch (db->db_type) {
     case sqlite:
       return database_sqlite_last_article_id_for_group(db, group_id);
   }
+  return -1;
 }
 
 int
@@ -68,6 +72,7 @@ database_begin(db)
     case sqlite:
       return database_sqlite_begin(db);
   }
+  return 1;
 }
 
 int
@@ -78,9 +83,10 @@ database_commit(db)
     case sqlite:
       return database_sqlite_commit(db);
   }
+  return 1;
 }
 
-int
+long long
 database_insert_article(db, a)
   database *db;
   article *a;
@@ -89,16 +95,18 @@ database_insert_article(db, a)
     case sqlite:
       return database_sqlite_insert_article(db, a);
   }
+  return -1;
 }
 
 int
 database_group_set_last_article_id(db, group_id, article_id)
   database *db;
-  int group_id;
-  int article_id;
+  long long group_id;
+  long long article_id;
 {
   switch (db->db_type) {
     case sqlite:
       return database_sqlite_group_set_last_article_id(db, group_id, article_id);
   }
+  return -1;
 }

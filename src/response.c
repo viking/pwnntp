@@ -15,8 +15,7 @@ nntp_response *
 nntp_receive(n_conn)
   nntp_conn *n_conn;
 {
-  int res, i, multiline = 0;
-  char *tail;
+  int res, multiline = 0;
   nntp_response *n_res;
 
   n_res = (nntp_response *)malloc(sizeof(nntp_response));

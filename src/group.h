@@ -6,9 +6,9 @@
 
 typedef struct {
   char *name;
-  long int high;
-  long int low;
-  long int count;
+  long long high;
+  long long low;
+  long long count;
 } nntp_group;
 
 nntp_group *nntp_group_new(const char *);

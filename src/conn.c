@@ -56,11 +56,15 @@ nntp_read(n_conn, sentinel, chomp)
   const char *sentinel;
   int chomp;
 {
-  int len = 0, slen = strlen(sentinel);
-  char *head, *tail;
+  size_t len = 0, slen = strlen(sentinel);
+  char *head, *tail, *new_head;
   int res, sindex = 0;
 
   head = tail = (char *)malloc(sizeof(char) * 1024);
+  if (head == NULL) {
+    perror("malloc");
+    return NULL;
+  }
   while (1) {
     res = BIO_read(n_conn->bio, tail, 1);
     if (res < 0) {
@@ -75,14 +79,20 @@ nntp_read(n_conn, sentinel, chomp)
 
     if (len % 1024 == 0) {
       /* make sure we have enough space for string + null */
-      head = (char *)realloc((void *)head, sizeof(char) * (len + 1024));
-      tail = head + len - 1;
+      new_head = (char *)realloc((void *)head, sizeof(char) * (len + 1024));
+      if (new_head == NULL) {
+        free(head);
+        perror("realloc");
+        return NULL;
+      }
+      head = new_head;
+      tail = head + ((int) len) - 1;
     }
 
     /* check for sentinel */
     if (*tail == sentinel[sindex]) {
       sindex++;
-      if (sindex == slen) {
+      if (sindex == ((int) slen)) {
         /* sentinel found */
         break;
       }
@@ -101,12 +111,13 @@ nntp_send(n_conn, cmd)
   nntp_conn *n_conn;
   const char *cmd;
 {
-  int res, len = strlen(cmd);
+  int res;
+  size_t len = strlen(cmd);
 #ifdef DEBUG
   fprintf(stderr, "%s", cmd);
 #endif
-  res = BIO_write(n_conn->bio, cmd, len);
-  if (res != len) {
+  res = BIO_write(n_conn->bio, cmd, (int) len);
+  if (res != ((int) len)) {
     fprintf(stderr, "Couldn't write: %s\n", ERR_reason_error_string(ERR_get_error()));
     return 1;
   }

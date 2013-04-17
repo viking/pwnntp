@@ -90,27 +90,27 @@ database_sqlite_close(db)
   free(db);
 }
 
-int
+long long
 database_sqlite_find_or_create_group(db, group)
   database *db;
   const char *group;
 {
-  int res, group_id;
+  int res;
+  long long group_id;
 
   /* find or create group; find last article id that we know about */
-  res = database_prepare(db, tmp_stmt, "SELECT id FROM groups WHERE name = ?");
+  res = database_sqlite_prepare(db, tmp_stmt, "SELECT id FROM groups WHERE name = ?");
   if (res > 0) {
     return -1;
   }
   sqlite3_bind_text((sqlite3_stmt *)db->s_stmt, 1, group, strlen(group), SQLITE_STATIC);
   res = sqlite3_step((sqlite3_stmt *)db->s_stmt);
   if (res == SQLITE_ROW) {
-    /* group exists; get latest article_id */
-    group_id = sqlite3_column_int((sqlite3_stmt *)db->s_stmt, 0);
+    group_id = (long long) sqlite3_column_int64((sqlite3_stmt *)db->s_stmt, 0);
   }
   else {
     /* create group */
-    res = database_prepare(db, tmp_stmt, "INSERT INTO groups (name) VALUES (?)");
+    res = database_sqlite_prepare(db, tmp_stmt, "INSERT INTO groups (name) VALUES (?)");
     if (res > 0) {
       return -1;
     }
@@ -118,7 +118,7 @@ database_sqlite_find_or_create_group(db, group)
     res = sqlite3_step((sqlite3_stmt *)db->s_stmt);
 
     if (res == SQLITE_DONE) {
-      group_id = (int)sqlite3_last_insert_rowid((sqlite3 *)db->s_db);
+      group_id = (long long) sqlite3_last_insert_rowid((sqlite3 *)db->s_db);
     }
     else {
       fprintf(stderr, "Couldn't create group: %s\n", sqlite3_errmsg((sqlite3 *)db->s_db));
@@ -128,21 +128,22 @@ database_sqlite_find_or_create_group(db, group)
   return group_id;
 }
 
-int
+long long
 database_sqlite_last_article_id_for_group(db, group_id)
   database *db;
-  int group_id;
+  long long group_id;
 {
-  int res, article_id;
+  int res;
+  long long article_id;
 
-  res = database_prepare(db, tmp_stmt, "SELECT last_article_id FROM groups WHERE id = ?");
+  res = database_sqlite_prepare(db, tmp_stmt, "SELECT last_article_id FROM groups WHERE id = ?");
   if (res > 0) {
     return -1;
   }
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 1, group_id);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 1, group_id);
 
   res = sqlite3_step((sqlite3_stmt *)db->s_stmt);
-  article_id = res == SQLITE_ROW ? sqlite3_column_int((sqlite3_stmt *)db->s_stmt, 0) : 0;
+  article_id = (long long) (res == SQLITE_ROW ? sqlite3_column_int64((sqlite3_stmt *)db->s_stmt, 0) : 0);
 
   return article_id;
 }
@@ -187,37 +188,37 @@ database_sqlite_commit(db)
   return 0;
 }
 
-int
+long long
 database_sqlite_insert_article(db, a)
   database *db;
   article *a;
 {
   int res;
-  res = database_prepare(db, insert_article_stmt, "INSERT INTO articles (article_id, group_id, subject, message_id, poster, posted_at, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  res = database_sqlite_prepare(db, insert_article_stmt, "INSERT INTO articles (article_id, group_id, subject, message_id, poster, posted_at, bytes) VALUES (?, ?, ?, ?, ?, ?, ?)");
   if (res > 0) {
     return -1;
   }
 
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 1, a->article_id);
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 2, a->group_id);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 1, a->article_id);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 2, a->group_id);
   sqlite3_bind_text((sqlite3_stmt *)db->s_stmt, 3, a->subject, a->slen, SQLITE_STATIC);
   sqlite3_bind_text((sqlite3_stmt *)db->s_stmt, 4, a->message_id, a->mlen, SQLITE_STATIC);
   sqlite3_bind_text((sqlite3_stmt *)db->s_stmt, 5, a->poster, a->plen, SQLITE_STATIC);
   sqlite3_bind_text((sqlite3_stmt *)db->s_stmt, 6, a->posted_at, a->wlen, SQLITE_STATIC);
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 7, a->bytes);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 7, a->bytes);
   while (1) {
     res = sqlite3_step((sqlite3_stmt *)db->s_stmt);
     if (res == SQLITE_DONE) {
       sqlite3_reset((sqlite3_stmt *)db->s_stmt);
       sqlite3_clear_bindings((sqlite3_stmt *)db->s_stmt);
-      return (int)sqlite3_last_insert_rowid((sqlite3 *)db->s_db);
+      return (long long) sqlite3_last_insert_rowid((sqlite3 *)db->s_db);
     }
     else if (res == SQLITE_BUSY) {
       fprintf(stderr, "Database is busy.  Sleeping...\n");
       sleep(1);
     }
     else {
-      fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %d, group_id: %d\n", sqlite3_errmsg((sqlite3 *)db->s_db), a->article_id, a->group_id);
+      fprintf(stderr, "Couldn't insert row (%s)\n  article_id: %lld, group_id: %lld\n", sqlite3_errmsg((sqlite3 *)db->s_db), a->article_id, a->group_id);
       return -1;
     }
   }
@@ -226,16 +227,16 @@ database_sqlite_insert_article(db, a)
 int
 database_sqlite_group_set_last_article_id(db, group_id, article_id)
   database *db;
-  int group_id;
-  int article_id;
+  long long group_id;
+  long long article_id;
 {
   int res;
-  res = database_prepare(db, tmp_stmt, "UPDATE groups SET last_article_id = ? WHERE id = ?");
+  res = database_sqlite_prepare(db, tmp_stmt, "UPDATE groups SET last_article_id = ? WHERE id = ?");
   if (res > 0) {
     return -1;
   }
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 1, article_id);
-  sqlite3_bind_int((sqlite3_stmt *)db->s_stmt, 2, group_id);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 1, article_id);
+  sqlite3_bind_int64((sqlite3_stmt *)db->s_stmt, 2, group_id);
   while (1) {
     res = sqlite3_step((sqlite3_stmt *)db->s_stmt);
     if (res == SQLITE_DONE) {

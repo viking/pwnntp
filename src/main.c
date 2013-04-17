@@ -10,6 +10,7 @@ nntp_decode_headers(data)
   const char *data;
 {
   int ret, len, r_len, r_total;
+  size_t ylen;
   unsigned have;
   z_stream strm;
   unsigned char in[CHUNK];
@@ -18,12 +19,12 @@ nntp_decode_headers(data)
   char *r_head, *r_tail;
 
   /* verify yenc info */
-  len = strlen(YENC_LINE);
-  if (strncmp(data, YENC_LINE, len) != 0) {
-    fprintf(stderr, "Bad header format.\n");
+  ylen = strlen(YENC_LINE);
+  if (strncmp(data, YENC_LINE, ylen) != 0) {
+    fprintf(stderr, "Bad header format: %s\n", data);
     return NULL;
   }
-  tail += len;
+  tail += (int) ylen;
 
   /* allocate inflate state */
   strm.zalloc = Z_NULL;
@@ -117,7 +118,7 @@ nntp_decode_headers(data)
         }
         r_tail = r_head + r_len;
       }
-      strncpy(r_tail, out, have);
+      strncpy(r_tail, (const char *) out, have);
       r_len += have;
       r_tail += have;
     } while (strm.avail_out == 0);
@@ -168,16 +169,17 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
   database *db;
   article *articles;
   const char *hdr;
-  int low;
-  int high;
-  int group_id;
+  long long low;
+  long long high;
+  long long group_id;
   int update;
 {
-  int count = 0, len, res, article_id;
+  int count = 0, len;
+  long long article_id;
   char tmp[1024], *headers, *h_cur, *h_tail;
   nntp_response *n_res;
 
-  sprintf(tmp, "XZHDR %s %d-%d\r\n", hdr, low, high);
+  sprintf(tmp, "XZHDR %s %lld-%lld\r\n", hdr, low, high);
   nntp_send(n_conn, tmp);
   n_res = nntp_receive(n_conn);
   if (n_res->status == NNTP_XZHDR_OK) {
@@ -210,7 +212,7 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
       break;
     }
 
-    article_id = (int)strtol(h_cur, &h_cur, 10);
+    article_id = strtoll(h_cur, &h_cur, 10);
     if (article_id == 0) {
       fprintf(stderr, "Invalid article id.\n");
       break;
@@ -250,7 +252,7 @@ process_headers(n_conn, db, articles, hdr, low, high, group_id, update)
       articles[count].wlen = len;
     }
     else if (strcmp(hdr, "Bytes") == 0) {
-      articles[count].bytes = (int)strtol(h_cur, NULL, 10);
+      articles[count].bytes = strtoll(h_cur, NULL, 10);
     }
 
     h_cur = h_tail + 2;
@@ -300,10 +302,10 @@ main(argc, argv)
   int argc;
   char *argv[];
 {
-  int i, j, count, c, len, article_id, group_id, res, migrate,
-      group_low, group_high, upper, lower;
+  int j, c, count = 0, res = 0;
+  long long i, article_id, group_id, group_low, group_high, upper, lower;
   char cmd[1024], *hdr;
-  FILE *f = NULL, *log = NULL;
+  FILE *log = NULL;
   nntp_conn *n_conn = NULL;
   nntp_response *n_res = NULL;
   nntp_group *n_group = NULL;
@@ -481,7 +483,7 @@ main(argc, argv)
 
     if (log != NULL) {
       set_timestamp();
-      fprintf(log, "%s: Headers %d - %d\n", timestamp, lower, upper);
+      fprintf(log, "%s: Headers %lld - %lld\n", timestamp, lower, upper);
       fflush(log);
     }
 

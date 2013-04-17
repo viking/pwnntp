@@ -2,8 +2,8 @@
 #define _ARTICLE_H
 
 typedef struct {
-  int article_id;
-  int group_id;
+  long long article_id;
+  long long group_id;
   char *subject;
   int slen;
   char *message_id;
@@ -12,7 +12,7 @@ typedef struct {
   int plen;
   char *posted_at;
   int wlen;
-  int bytes;
+  long long bytes;
 } article;
 
 #endif

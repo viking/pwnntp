@@ -27,11 +27,11 @@ typedef struct {
 
 database *database_open(enum db_types, ...);
 void database_close(database *);
-int database_find_or_create_group(database *, const char *);
-int database_last_article_id_for_group(database *, int);
+long long database_find_or_create_group(database *, const char *);
+long long database_last_article_id_for_group(database *, long long);
 int database_begin(database *);
 int database_commit(database *);
-int database_insert_article(database *, article *);
-int database_group_set_last_article_id(database *, int, int);
+long long database_insert_article(database *, article *);
+int database_group_set_last_article_id(database *, long long, long long);
 
 #endif
